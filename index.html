@@ -10,6 +10,7 @@
         .canvas-container {
             width: 100%;
             max-width: 800px;
+            /* El aspect-ratio ahora se actualiza dinámicamente desde JS */
             aspect-ratio: 4/3;
             background: #2d3748;
             border: 2px dashed #4a5568;
@@ -26,11 +27,11 @@
             height: 100%;
             image-rendering: pixelated;
             object-fit: contain;
+            cursor: crosshair;
         }
         input[type="range"] {
             accent-color: #4299e1;
         }
-        /* Ocultar flechas del input number */
         input[type=number]::-webkit-inner-spin-button, 
         input[type=number]::-webkit-outer-spin-button { 
             -webkit-appearance: none; 
@@ -46,7 +47,7 @@
     <div class="max-w-7xl mx-auto">
         <header class="mb-8 border-b border-gray-700 pb-4">
             <h1 class="text-3xl font-bold text-white">Visor Termográfico Fluke (.IS2)</h1>
-            <p class="text-gray-400 mt-2">Carga tu archivo IS2, ajusta el desplazamiento y exporta los datos.</p>
+            <p class="text-gray-400 mt-2">Carga tu archivo IS2, ajusta el desplazamiento, visualiza puntos y exporta los datos.</p>
         </header>
 
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -131,6 +132,29 @@
                         <p class="text-xs text-right mt-2 text-gray-400 font-mono">Total: <span id="total-pixels-val" class="text-blue-400 font-bold">307200</span> px</p>
                     </div>
 
+                    <!-- Panel de Inspección de Píxeles (NUEVO) -->
+                    <div class="mb-4 bg-gray-900 p-3 rounded-md border border-gray-700">
+                        <label class="flex items-center text-sm font-medium text-gray-300 mb-2 cursor-pointer">
+                            <input type="checkbox" id="chk-markers" class="mr-2 w-4 h-4 text-blue-600 bg-gray-800 border-gray-600 rounded" checked disabled>
+                            Mostrar marcadores (Min / Max / Tap)
+                        </label>
+                        <div class="text-xs text-gray-400 space-y-1">
+                            <p class="flex justify-between">
+                                <span class="text-cyan-400 font-semibold">Min (Cian):</span>
+                                <span id="info-min-val" class="font-mono">N/A</span>
+                            </p>
+                            <p class="flex justify-between">
+                                <span class="text-red-400 font-semibold">Max (Rojo):</span>
+                                <span id="info-max-val" class="font-mono">N/A</span>
+                            </p>
+                            <hr class="border-gray-700 my-1">
+                            <p class="flex justify-between">
+                                <span class="text-yellow-400 font-semibold">Tap (Amarillo):</span>
+                                <span id="info-tap-val" class="font-mono">Haz clic en la imagen</span>
+                            </p>
+                        </div>
+                    </div>
+
                     <div class="mb-4">
                         <label class="block text-sm font-medium text-gray-300 mb-2">Paleta de Colores</label>
                         <select id="palette-select" class="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" disabled>
@@ -142,19 +166,19 @@
                     </div>
 
                     <div class="flex justify-between items-end mb-2">
-                        <label class="block text-sm font-medium text-gray-300">Rango Térmico</label>
+                        <label class="block text-sm font-medium text-gray-300">Rango Térmico (Contraste)</label>
                         <button id="btn-auto-range" class="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 rounded text-xs text-white transition shadow disabled:opacity-50" title="Recalcular el brillo ideal para este cuadro" disabled>
-                            Auto-Ajustar Brillo
+                            Auto-Ajustar
                         </button>
                     </div>
 
                     <div class="mb-4">
-                        <label class="block text-sm font-medium text-gray-400 mb-1">Mínimo: <span id="min-val" class="font-mono text-blue-400">0</span></label>
+                        <label class="block text-sm font-medium text-gray-400 mb-1">Mínimo visible: <span id="min-val" class="font-mono text-blue-400">0</span></label>
                         <input type="range" id="min-slider" class="w-full" min="0" max="65535" value="0" disabled>
                     </div>
 
                     <div class="mb-2">
-                        <label class="block text-sm font-medium text-gray-400 mb-1">Máximo: <span id="max-val" class="font-mono text-blue-400">65535</span></label>
+                        <label class="block text-sm font-medium text-gray-400 mb-1">Máximo visible: <span id="max-val" class="font-mono text-blue-400">65535</span></label>
                         <input type="range" id="max-slider" class="w-full" min="0" max="65535" value="65535" disabled>
                     </div>
                 </div>
@@ -182,19 +206,34 @@
     </div>
 
     <script>
-        // Variables dinámicas de resolución (Ajustadas a lo que encontraste útil)
+        // Variables dinámicas de resolución
         let WIDTH = 640;
         let HEIGHT = 480; 
         let PIXELS = WIDTH * HEIGHT;
-        const BYTES_PER_PIXEL = 2; // 16-bit por defecto en termografía raw
+        const BYTES_PER_PIXEL = 2;
         let BLOCK_SIZE = PIXELS * BYTES_PER_PIXEL;
 
-        // Estado Global
+        // Estado Global de Datos
         let fileBuffer = null;
         let rawThermalData = new Uint16Array(PIXELS);
-        let currentOffset = 0; // Preset por defecto
-        let minTemp = 0;
-        let maxTemp = 65535;
+        let currentOffset = 0;
+        let minTemp = 0; // Para el renderizado (contraste)
+        let maxTemp = 65535; // Para el renderizado (contraste)
+        
+        // Estado Global de Puntos (NUEVO)
+        let frameMinVal = 65535, frameMinX = 0, frameMinY = 0;
+        let frameMaxVal = 0, frameMaxX = 0, frameMaxY = 0;
+        let selectedX = -1, selectedY = -1, selectedVal = null;
+
+        // Función para formatear el valor a 2 enteros y 3 decimales (ej. 05.123, 65.535)
+        function formatTemp(rawVal) {
+            // Dividimos entre 1000 como factor de conversión de ejemplo para lograr el formato
+            // Puedes ajustar este divisor según la calibración real de temperatura
+            let temp = rawVal / 1000;
+            let parts = temp.toFixed(3).split('.');
+            parts[0] = parts[0].padStart(2, '0'); // Asegura al menos 2 dígitos enteros
+            return parts.join('.');
+        }
 
         // Elementos del DOM
         const fileInput = document.getElementById('file-input');
@@ -210,6 +249,14 @@
         const inputWidth = document.getElementById('input-width');
         const inputHeight = document.getElementById('input-height');
         const totalPixelsVal = document.getElementById('total-pixels-val');
+        
+        // Paneles de Puntos (NUEVO)
+        const chkMarkers = document.getElementById('chk-markers');
+        const infoMinVal = document.getElementById('info-min-val');
+        const infoMaxVal = document.getElementById('info-max-val');
+        const infoTapVal = document.getElementById('info-tap-val');
+
+        const dropZone = document.getElementById('drop-zone');
         const canvas = document.getElementById('thermal-canvas');
         const ctx = canvas.getContext('2d');
         const placeholder = document.getElementById('placeholder-text');
@@ -231,7 +278,7 @@
         const btnPxPlus = document.getElementById('btn-px-plus');
         const btnBytePlus = document.getElementById('btn-byte-plus');
         
-        const allControls = [offsetSlider, offsetInput, presetSelect, btnAutoRange, minSlider, maxSlider, paletteSelect, btnCsv, btnPng, btnJpg, btnBmp, btnRowMinus, btn100PxMinus, btn10PxMinus, btnPxMinus, btnByteMinus, btnRowPlus, btn100PxPlus, btn10PxPlus, btnPxPlus, btnBytePlus, inputWidth, inputHeight];
+        const allControls = [offsetSlider, offsetInput, presetSelect, btnAutoRange, chkMarkers, minSlider, maxSlider, paletteSelect, btnCsv, btnPng, btnJpg, btnBmp, btnRowMinus, btn100PxMinus, btn10PxMinus, btnPxMinus, btnByteMinus, btnRowPlus, btn100PxPlus, btn10PxPlus, btnPxPlus, btnBytePlus, inputWidth, inputHeight];
 
         function updateResolutionConfig() {
             WIDTH = parseInt(inputWidth.value, 10) || 640;
@@ -244,18 +291,23 @@
 
             canvas.width = WIDTH;
             canvas.height = HEIGHT;
+            
+            // Para asegurar clics precisos, obligamos al contenedor a usar el aspecto real
+            dropZone.style.aspectRatio = `${WIDTH} / ${HEIGHT}`;
+            
+            // Resetear punto seleccionado al cambiar resolución
+            selectedX = -1;
+            selectedY = -1;
+            infoTapVal.textContent = "Haz clic en la imagen";
 
             if (fileBuffer) {
                 initWorkspace();
             }
         }
 
-        // Paletas de Color (Mapean valor 0.0 - 1.0 a RGB)
+        // Paletas de Color
         const palettes = {
-            grayscale: (t) => {
-                const v = Math.floor(t * 255);
-                return [v, v, v];
-            },
+            grayscale: (t) => { const v = Math.floor(t * 255); return [v, v, v]; },
             iron: (t) => {
                 const r = Math.floor(255 * Math.pow(t, 0.5));
                 const g = Math.floor(255 * Math.pow(t, 2.5));
@@ -264,11 +316,8 @@
             },
             rainbow: (t) => {
                 const h = (1.0 - t) * 240; 
-                const s = 1.0;
-                const v = 1.0;
-                let c = v * s;
+                let c = 1.0;
                 let x = c * (1 - Math.abs(((h / 60) % 2) - 1));
-                let m = v - c;
                 let r=0, g=0, b=0;
                 if (h >= 0 && h < 60) { r = c; g = x; b = 0; }
                 else if (h >= 60 && h < 120) { r = x; g = c; b = 0; }
@@ -276,7 +325,7 @@
                 else if (h >= 180 && h < 240) { r = 0; g = x; b = c; }
                 else if (h >= 240 && h < 300) { r = x; g = 0; b = c; }
                 else { r = c; g = 0; b = x; }
-                return [Math.floor((r+m)*255), Math.floor((g+m)*255), Math.floor((b+m)*255)];
+                return [Math.floor(r*255), Math.floor(g*255), Math.floor(b*255)];
             },
             hotmetal: (t) => {
                 const r = Math.floor(Math.min(255, t * 255 * 2.5));
@@ -286,7 +335,7 @@
             }
         };
 
-        // Event Listeners
+        // Event Listeners de Configuración
         inputWidth.addEventListener('change', updateResolutionConfig);
         inputHeight.addEventListener('change', updateResolutionConfig);
 
@@ -304,7 +353,7 @@
         function initWorkspace() {
             const fileLength = fileBuffer.byteLength;
             if (fileLength < BLOCK_SIZE) {
-                alert(`El archivo es demasiado pequeño para una matriz de ${WIDTH}x${HEIGHT}. Intenta con una resolución menor.`);
+                alert(`El archivo es demasiado pequeño para una matriz de ${WIDTH}x${HEIGHT}.`);
                 return;
             }
 
@@ -316,17 +365,11 @@
             offsetSlider.max = maxOffset;
             offsetInput.max = maxOffset;
             
-            // Iniciar en el offset por defecto o 0
-            if (currentOffset <= maxOffset) {
-                // Mantiene el currentOffset
-            } else {
-                currentOffset = 0;
-            }
+            if (currentOffset > maxOffset) currentOffset = 0;
             
             offsetSlider.value = currentOffset;
             offsetInput.value = currentOffset;
 
-            // Auto-Ajuste SOLO la primera vez al cargar
             minTemp = 0; maxTemp = 65535;
 
             extractDataAndRender();
@@ -336,31 +379,43 @@
             if (!fileBuffer) return;
 
             const dataView = new DataView(fileBuffer, currentOffset, BLOCK_SIZE);
-            let localMin = 65535;
-            let localMax = 0;
+            frameMinVal = 65535;
+            frameMaxVal = 0;
 
-            // Extraer valores de 16-bit
-            for (let i = 0; i < PIXELS; i++) {
-                // 'true' para Little Endian
-                const val = dataView.getUint16(i * 2, true); 
-                rawThermalData[i] = val;
-                if (val < localMin) localMin = val;
-                if (val > localMax) localMax = val;
+            for (let y = 0; y < HEIGHT; y++) {
+                for (let x = 0; x < WIDTH; x++) {
+                    const idx = y * WIDTH + x;
+                    const val = dataView.getUint16(idx * 2, true); // Extraer valor 16-bit
+                    rawThermalData[idx] = val;
+                    
+                    // Encontrar Min / Max del cuadro
+                    if (val < frameMinVal) { frameMinVal = val; frameMinX = x; frameMinY = y; }
+                    if (val > frameMaxVal) { frameMaxVal = val; frameMaxX = x; frameMaxY = y; }
+                }
             }
 
-            // Auto-Ajuste (ahora solo se activa explícitamente cuando están en 0 y 65535)
-            if (minTemp === 0 && maxTemp === 65535) {
-                // Dar un pequeño margen para mejorar contraste base
-                let margin = (localMax - localMin) * 0.02;
-                minTemp = Math.floor(Math.max(0, localMin + margin));
-                maxTemp = Math.floor(Math.min(65535, localMax - margin));
+            // Actualizar panel de información
+            infoMinVal.textContent = formatTemp(frameMinVal);
+            infoMaxVal.textContent = formatTemp(frameMaxVal);
 
-                minSlider.min = localMin;
-                minSlider.max = localMax;
+            // Si hay un punto seleccionado, actualizar su valor para este frame
+            if (selectedX !== -1 && selectedY !== -1) {
+                selectedVal = rawThermalData[selectedY * WIDTH + selectedX];
+                infoTapVal.textContent = `${formatTemp(selectedVal)} (X:${selectedX}, Y:${selectedY})`;
+            }
+
+            // Auto-Ajuste Rango Visual
+            if (minTemp === 0 && maxTemp === 65535) {
+                let margin = (frameMaxVal - frameMinVal) * 0.02;
+                minTemp = Math.floor(Math.max(0, frameMinVal + margin));
+                maxTemp = Math.floor(Math.min(65535, frameMaxVal - margin));
+
+                minSlider.min = frameMinVal;
+                minSlider.max = frameMaxVal;
                 minSlider.value = minTemp;
 
-                maxSlider.min = localMin;
-                maxSlider.max = localMax;
+                maxSlider.min = frameMinVal;
+                maxSlider.max = frameMaxVal;
                 maxSlider.value = maxTemp;
             }
             
@@ -373,9 +428,9 @@
             const imageData = ctx.createImageData(WIDTH, HEIGHT);
             const range = maxTemp - minTemp || 1; 
 
+            // 1. Dibujar Imagen Térmica
             for (let i = 0; i < PIXELS; i++) {
                 let val = rawThermalData[i];
-                
                 if (val < minTemp) val = minTemp;
                 if (val > maxTemp) val = maxTemp;
 
@@ -388,9 +443,110 @@
                 imageData.data[pxIndex + 2] = b;
                 imageData.data[pxIndex + 3] = 255; 
             }
-
             ctx.putImageData(imageData, 0, 0);
+
+            // 2. Dibujar Marcadores y Textos (Si están habilitados)
+            if (chkMarkers.checked) {
+                
+                // Función auxiliar para dibujar miras con contorno para que resalten
+                const drawMarker = (x, y, color, label, isTop) => {
+                    // Tamaño proporcional a la resolución
+                    const size = Math.max(4, Math.floor(WIDTH / 40)); 
+                    const fontSize = Math.max(12, Math.floor(WIDTH / 35));
+
+                    // Sombra/Trazo para visibilidad
+                    ctx.shadowColor = 'black';
+                    ctx.shadowBlur = 3;
+                    
+                    // Líneas de la cruz
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = Math.max(1, WIDTH / 300);
+                    ctx.beginPath();
+                    ctx.moveTo(x - size, y); ctx.lineTo(x + size, y);
+                    ctx.moveTo(x, y - size); ctx.lineTo(x, y + size);
+                    ctx.stroke();
+
+                    // Configurar fuente para medir el texto
+                    ctx.fillStyle = color;
+                    ctx.font = `bold ${fontSize}px sans-serif`;
+                    const textWidth = ctx.measureText(label).width;
+
+                    // Calcular posiciones X e Y evitando que salgan del canvas
+                    let textX = x + size + 4;
+                    // Prevenir desborde por la derecha
+                    if (textX + textWidth > WIDTH) {
+                        textX = x - size - textWidth - 4;
+                        // Si se sale por la izquierda también (imágenes muy pequeñas), lo forzamos al borde
+                        if (textX < 0) textX = 2;
+                    }
+
+                    let textY = isTop ? y + size + fontSize : y - size - 4;
+                    // Prevenir desborde por abajo
+                    if (textY > HEIGHT - 2) {
+                        textY = y - size - 4;
+                    }
+                    // Prevenir desborde por arriba
+                    if (textY - fontSize < 0) {
+                        textY = y + size + fontSize;
+                    }
+                    
+                    // Dibujar borde negro alrededor del texto para legibilidad
+                    ctx.lineWidth = 2;
+                    ctx.strokeStyle = 'black';
+                    ctx.strokeText(label, textX, textY);
+                    
+                    // Relleno de color
+                    ctx.shadowBlur = 0; // Quitar sombra para texto nítido
+                    ctx.fillText(label, textX, textY);
+                };
+
+                // Dibujar Mínimo (Cian) y Máximo (Rojo)
+                drawMarker(frameMinX, frameMinY, '#00FFFF', formatTemp(frameMinVal), true);
+                drawMarker(frameMaxX, frameMaxY, '#FF3333', formatTemp(frameMaxVal), false);
+
+                // Dibujar Punto Seleccionado (Tap) (Amarillo)
+                if (selectedX !== -1) {
+                    drawMarker(selectedX, selectedY, '#FFFF00', formatTemp(selectedVal), true);
+                }
+            }
         }
+
+        // --- SISTEMA DE TAP / CLIC ---
+        canvas.addEventListener('pointerdown', (e) => {
+            if (!fileBuffer) return;
+            
+            // Obtener el tamaño real dibujado en pantalla
+            const rect = canvas.getBoundingClientRect();
+            
+            // Calcular posición relativa del clic
+            const clickX = e.clientX - rect.left;
+            const clickY = e.clientY - rect.top;
+
+            // Mapear el clic (pantalla) a píxeles de la matriz original (WIDTH x HEIGHT)
+            let pxX = Math.floor((clickX / rect.width) * WIDTH);
+            let pxY = Math.floor((clickY / rect.height) * HEIGHT);
+
+            // Evitar que se salga de los bordes
+            pxX = Math.max(0, Math.min(WIDTH - 1, pxX));
+            pxY = Math.max(0, Math.min(HEIGHT - 1, pxY));
+
+            // Guardar selección global
+            selectedX = pxX;
+            selectedY = pxY;
+            selectedVal = rawThermalData[selectedY * WIDTH + selectedX];
+
+            // Actualizar UI
+            infoTapVal.textContent = `${formatTemp(selectedVal)} (X:${selectedX}, Y:${selectedY})`;
+            
+            // Si los marcadores están ocultos, encenderlos automáticamente al hacer tap
+            if (!chkMarkers.checked) {
+                chkMarkers.checked = true;
+            }
+
+            renderCanvas();
+        });
+
+        chkMarkers.addEventListener('change', renderCanvas);
 
         function updateLabels() {
             offsetInput.value = currentOffset;
@@ -402,20 +558,16 @@
         function changeOffset(amount) {
             let newOffset = currentOffset + amount;
             currentOffset = Math.max(0, Math.min(parseInt(offsetSlider.max), newOffset));
-            // SE ELIMINÓ EL RESETEO AUTOMÁTICO DE RANGO AQUÍ (minTemp=0...)
             extractDataAndRender();
         }
 
         // --- Controles de Offset ---
-        
-        // Slider
         offsetSlider.addEventListener('input', (e) => {
             currentOffset = parseInt(e.target.value, 10);
             presetSelect.value = "custom";
             extractDataAndRender();
         });
 
-        // Input Directo (escribir número)
         offsetInput.addEventListener('change', (e) => {
             let val = parseInt(e.target.value, 10);
             if (isNaN(val)) val = 0;
@@ -424,29 +576,24 @@
             extractDataAndRender();
         });
 
-        // Selector de Presets (Puntos de partida)
         presetSelect.addEventListener('change', (e) => {
             if (e.target.value === "511_512x384") {
-                inputWidth.value = 512;
-                inputHeight.value = 384;
+                inputWidth.value = 512; inputHeight.value = 384;
                 currentOffset = Math.min(511, parseInt(offsetSlider.max) || 511);
                 updateResolutionConfig(); 
             } else if (e.target.value === "0_640x480") {
-                inputWidth.value = 640;
-                inputHeight.value = 480;
+                inputWidth.value = 640; inputHeight.value = 480;
                 currentOffset = 0;
                 updateResolutionConfig();
             } else if (e.target.value === "0_64x48") {
-                inputWidth.value = 64;
-                inputHeight.value = 48;
-                currentOffset = 0; // Usualmente las imágenes pequeñas empiezan cerca del inicio
+                inputWidth.value = 64; inputHeight.value = 48;
+                currentOffset = 0;
                 updateResolutionConfig();
             }
         });
 
-        // Botón Auto-Ajustar (Rango Manual)
         btnAutoRange.addEventListener('click', () => {
-            minTemp = 0; maxTemp = 65535; // Esto fuerza la bandera de recalcular
+            minTemp = 0; maxTemp = 65535; 
             extractDataAndRender();
         });
 
@@ -514,7 +661,6 @@
         });
 
         // Drag & Drop
-        const dropZone = document.getElementById('drop-zone');
         dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('border-blue-500'); });
         dropZone.addEventListener('dragleave', (e) => { e.preventDefault(); dropZone.classList.remove('border-blue-500'); });
         dropZone.addEventListener('drop', (e) => {
@@ -526,14 +672,13 @@
             }
         });
 
-        // Inicializar tamaño del canvas por defecto
+        // Inicializar
         canvas.width = WIDTH;
         canvas.height = HEIGHT;
+        dropZone.style.aspectRatio = `${WIDTH} / ${HEIGHT}`;
     </script>
 </body>
 </html>
-
-
 
 
 
