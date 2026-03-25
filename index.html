@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visor Termográfico Fluke IS2</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #1a202c; color: #e2e8f0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        .canvas-container {
+            width: 100%;
+            max-width: 800px;
+            aspect-ratio: 4/3;
+            background: #2d3748;
+            border: 2px dashed #4a5568;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            border-radius: 0.5rem;
+            position: relative;
+            margin: 0 auto;
+        }
+        canvas {
+            width: 100%;
+            height: 100%;
+            image-rendering: pixelated;
+            object-fit: contain;
+        }
+        input[type="range"] {
+            accent-color: #4299e1;
+        }
+        /* Ocultar flechas del input number */
+        input[type=number]::-webkit-inner-spin-button, 
+        input[type=number]::-webkit-outer-spin-button { 
+            -webkit-appearance: none; 
+            margin: 0; 
+        }
+        input[type=number] {
+            -moz-appearance: textfield;
+        }
+    </style>
+</head>
+<body class="min-h-screen p-4 md:p-8">
+
+    <div class="max-w-7xl mx-auto">
+        <header class="mb-8 border-b border-gray-700 pb-4">
+            <h1 class="text-3xl font-bold text-white">Visor Termográfico Fluke (.IS2)</h1>
+            <p class="text-gray-400 mt-2">Carga tu archivo IS2, ajusta el desplazamiento y exporta los datos.</p>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <!-- Columna Izquierda: Visor -->
+            <div class="lg:col-span-2 space-y-4">
+                <div class="canvas-container" id="drop-zone">
+                    <canvas id="thermal-canvas" style="display: none;"></canvas>
+                    <div id="placeholder-text" class="text-gray-500 text-center pointer-events-none">
+                        <svg class="w-12 h-12 mx-auto mb-2 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                        <p>Arrastra un archivo .IS2 aquí<br>o haz clic en "Cargar Archivo"</p>
+                    </div>
+                </div>
+
+                <div class="bg-gray-800 p-4 rounded-lg shadow-lg border border-gray-700">
+                    <h3 class="text-lg font-semibold mb-3 text-white">Búsqueda de Datos en Bruto (Offset)</h3>
+                    <p class="text-sm text-gray-400 mb-2">Ajusta el inicio del bloque de imagen. Ahora puedes escribir el valor directamente.</p>
+                    
+                    <div class="mb-3 mt-4">
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Puntos de Partida (Presets):</label>
+                        <select id="preset-select" class="w-full bg-gray-700 border border-gray-600 rounded-md py-1 px-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="custom">Personalizado...</option>
+                            <option value="0_640x480" selected>Fluke Estándar (Offset: 0, Res: 640x480)</option>
+                            <option value="511_512x384">Fluke Intermedio (Offset: 511, Res: 512x384)</option>
+                            <option value="0_64x48">Fluke Low-Res (Offset: 0, Res: 64x48 - 3072 px)</option>
+                        </select>
+                    </div>
+
+                    <div class="flex items-center justify-between mb-1 mt-4">
+                        <label class="block text-sm font-medium text-gray-300 flex items-center">
+                            Offset (bytes): 
+                            <input type="number" id="offset-input" class="ml-3 bg-gray-900 border border-gray-600 rounded text-blue-400 font-mono px-3 py-1 w-28 focus:outline-none focus:ring-2 focus:ring-blue-500 text-center" value="0" min="0" disabled>
+                        </label>
+                    </div>
+                    
+                    <input type="range" id="offset-slider" class="w-full mt-3" min="0" max="100" value="0" step="1" disabled>
+                    
+                    <div class="grid grid-cols-2 sm:grid-cols-5 gap-2 mt-4">
+                        <button id="btn-row-minus" class="px-2 py-2 bg-gray-700 rounded text-xs text-white hover:bg-gray-600 disabled:opacity-50" title="Mover la imagen 1 fila hacia abajo" disabled>-1 Fila</button>
+                        <button id="btn-100px-minus" class="px-2 py-2 bg-gray-700 rounded text-xs text-white hover:bg-gray-600 disabled:opacity-50" title="Desplazar 100 píxeles a la izquierda" disabled>-100 Px</button>
+                        <button id="btn-10px-minus" class="px-2 py-2 bg-gray-700 rounded text-xs text-white hover:bg-gray-600 disabled:opacity-50" title="Desplazar 10 píxeles a la izquierda" disabled>-10 Px</button>
+                        <button id="btn-px-minus" class="px-2 py-2 bg-gray-700 rounded text-xs text-white hover:bg-gray-600 disabled:opacity-50" title="Desplazar 1 píxel a la izquierda" disabled>-1 Px</button>
+                        <button id="btn-byte-minus" class="px-2 py-2 bg-gray-700 rounded text-xs text-white hover:bg-gray-600 disabled:opacity-50" title="Desplazar 1 byte (Ajuste fino impar)" disabled>-1 Byte</button>
+                        
+                        <button id="btn-row-plus" class="px-2 py-2 bg-gray-700 rounded text-xs text-white hover:bg-gray-600 disabled:opacity-50" title="Mover la imagen 1 fila hacia arriba" disabled>+1 Fila</button>
+                        <button id="btn-100px-plus" class="px-2 py-2 bg-gray-700 rounded text-xs text-white hover:bg-gray-600 disabled:opacity-50" title="Desplazar 100 píxeles a la derecha" disabled>+100 Px</button>
+                        <button id="btn-10px-plus" class="px-2 py-2 bg-gray-700 rounded text-xs text-white hover:bg-gray-600 disabled:opacity-50" title="Desplazar 10 píxeles a la derecha" disabled>+10 Px</button>
+                        <button id="btn-px-plus" class="px-2 py-2 bg-gray-700 rounded text-xs text-white hover:bg-gray-600 disabled:opacity-50" title="Desplazar 1 píxel a la derecha" disabled>+1 Px</button>
+                        <button id="btn-byte-plus" class="px-2 py-2 bg-gray-700 rounded text-xs text-white hover:bg-gray-600 disabled:opacity-50" title="Desplazar 1 byte (Ajuste fino impar)" disabled>+1 Byte</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Columna Derecha: Controles -->
+            <div class="space-y-6">
+                <!-- Carga de archivo -->
+                <div class="bg-gray-800 p-5 rounded-lg shadow-lg border border-gray-700">
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Cargar Archivo IS2</label>
+                    <input type="file" id="file-input" accept=".is2,.bin" class="block w-full text-sm text-gray-400
+                        file:mr-4 file:py-2 file:px-4
+                        file:rounded-md file:border-0
+                        file:text-sm file:font-semibold
+                        file:bg-blue-600 file:text-white
+                        hover:file:bg-blue-700 cursor-pointer">
+                </div>
+
+                <!-- Opciones de Visualización -->
+                <div class="bg-gray-800 p-5 rounded-lg shadow-lg border border-gray-700">
+                    <h3 class="text-lg font-semibold mb-4 text-white">Ajustes Visuales</h3>
+                    
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-300 mb-2">Resolución de Matriz (Píxeles)</label>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="text-xs text-gray-400">Ancho (px)</label>
+                                <input type="number" id="input-width" value="640" class="w-full bg-gray-700 border border-gray-600 rounded-md py-1 px-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" min="10">
+                            </div>
+                            <div>
+                                <label class="text-xs text-gray-400">Alto (px)</label>
+                                <input type="number" id="input-height" value="480" class="w-full bg-gray-700 border border-gray-600 rounded-md py-1 px-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" min="10">
+                            </div>
+                        </div>
+                        <p class="text-xs text-right mt-2 text-gray-400 font-mono">Total: <span id="total-pixels-val" class="text-blue-400 font-bold">307200</span> px</p>
+                    </div>
+
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-300 mb-2">Paleta de Colores</label>
+                        <select id="palette-select" class="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" disabled>
+                            <option value="iron">Hierro (Ironbow)</option>
+                            <option value="rainbow">Arcoíris</option>
+                            <option value="grayscale">Escala de Grises</option>
+                            <option value="hotmetal">Metal Caliente</option>
+                        </select>
+                    </div>
+
+                    <div class="flex justify-between items-end mb-2">
+                        <label class="block text-sm font-medium text-gray-300">Rango Térmico</label>
+                        <button id="btn-auto-range" class="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 rounded text-xs text-white transition shadow disabled:opacity-50" title="Recalcular el brillo ideal para este cuadro" disabled>
+                            Auto-Ajustar Brillo
+                        </button>
+                    </div>
+
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-400 mb-1">Mínimo: <span id="min-val" class="font-mono text-blue-400">0</span></label>
+                        <input type="range" id="min-slider" class="w-full" min="0" max="65535" value="0" disabled>
+                    </div>
+
+                    <div class="mb-2">
+                        <label class="block text-sm font-medium text-gray-400 mb-1">Máximo: <span id="max-val" class="font-mono text-blue-400">65535</span></label>
+                        <input type="range" id="max-slider" class="w-full" min="0" max="65535" value="65535" disabled>
+                    </div>
+                </div>
+
+                <!-- Opciones de Exportación -->
+                <div class="bg-gray-800 p-5 rounded-lg shadow-lg border border-gray-700">
+                    <h3 class="text-lg font-semibold mb-4 text-white">Exportar</h3>
+                    <div class="grid grid-cols-2 gap-3">
+                        <button id="btn-csv" class="bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded-md transition duration-150 flex justify-center items-center text-sm" disabled>
+                            Descargar CSV
+                        </button>
+                        <button id="btn-png" class="bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-md transition duration-150 flex justify-center items-center text-sm" disabled>
+                            Descargar PNG
+                        </button>
+                        <button id="btn-jpg" class="bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-md transition duration-150 flex justify-center items-center text-sm" disabled>
+                            Descargar JPG
+                        </button>
+                        <button id="btn-bmp" class="bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-md transition duration-150 flex justify-center items-center text-sm" disabled>
+                            Descargar BMP
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Variables dinámicas de resolución (Ajustadas a lo que encontraste útil)
+        let WIDTH = 640;
+        let HEIGHT = 480; 
+        let PIXELS = WIDTH * HEIGHT;
+        const BYTES_PER_PIXEL = 2; // 16-bit por defecto en termografía raw
+        let BLOCK_SIZE = PIXELS * BYTES_PER_PIXEL;
+
+        // Estado Global
+        let fileBuffer = null;
+        let rawThermalData = new Uint16Array(PIXELS);
+        let currentOffset = 0; // Preset por defecto
+        let minTemp = 0;
+        let maxTemp = 65535;
+
+        // Elementos del DOM
+        const fileInput = document.getElementById('file-input');
+        const offsetSlider = document.getElementById('offset-slider');
+        const offsetInput = document.getElementById('offset-input');
+        const presetSelect = document.getElementById('preset-select');
+        
+        const minSlider = document.getElementById('min-slider');
+        const minVal = document.getElementById('min-val');
+        const maxSlider = document.getElementById('max-slider');
+        const maxVal = document.getElementById('max-val');
+        const paletteSelect = document.getElementById('palette-select');
+        const inputWidth = document.getElementById('input-width');
+        const inputHeight = document.getElementById('input-height');
+        const totalPixelsVal = document.getElementById('total-pixels-val');
+        const canvas = document.getElementById('thermal-canvas');
+        const ctx = canvas.getContext('2d');
+        const placeholder = document.getElementById('placeholder-text');
+        
+        // Botones
+        const btnAutoRange = document.getElementById('btn-auto-range');
+        const btnCsv = document.getElementById('btn-csv');
+        const btnPng = document.getElementById('btn-png');
+        const btnJpg = document.getElementById('btn-jpg');
+        const btnBmp = document.getElementById('btn-bmp');
+        const btnRowMinus = document.getElementById('btn-row-minus');
+        const btn100PxMinus = document.getElementById('btn-100px-minus');
+        const btn10PxMinus = document.getElementById('btn-10px-minus');
+        const btnPxMinus = document.getElementById('btn-px-minus');
+        const btnByteMinus = document.getElementById('btn-byte-minus');
+        const btnRowPlus = document.getElementById('btn-row-plus');
+        const btn100PxPlus = document.getElementById('btn-100px-plus');
+        const btn10PxPlus = document.getElementById('btn-10px-plus');
+        const btnPxPlus = document.getElementById('btn-px-plus');
+        const btnBytePlus = document.getElementById('btn-byte-plus');
+        
+        const allControls = [offsetSlider, offsetInput, presetSelect, btnAutoRange, minSlider, maxSlider, paletteSelect, btnCsv, btnPng, btnJpg, btnBmp, btnRowMinus, btn100PxMinus, btn10PxMinus, btnPxMinus, btnByteMinus, btnRowPlus, btn100PxPlus, btn10PxPlus, btnPxPlus, btnBytePlus, inputWidth, inputHeight];
+
+        function updateResolutionConfig() {
+            WIDTH = parseInt(inputWidth.value, 10) || 640;
+            HEIGHT = parseInt(inputHeight.value, 10) || 480;
+            PIXELS = WIDTH * HEIGHT;
+            BLOCK_SIZE = PIXELS * BYTES_PER_PIXEL;
+            rawThermalData = new Uint16Array(PIXELS);
+            
+            totalPixelsVal.textContent = PIXELS;
+
+            canvas.width = WIDTH;
+            canvas.height = HEIGHT;
+
+            if (fileBuffer) {
+                initWorkspace();
+            }
+        }
+
+        // Paletas de Color (Mapean valor 0.0 - 1.0 a RGB)
+        const palettes = {
+            grayscale: (t) => {
+                const v = Math.floor(t * 255);
+                return [v, v, v];
+            },
+            iron: (t) => {
+                const r = Math.floor(255 * Math.pow(t, 0.5));
+                const g = Math.floor(255 * Math.pow(t, 2.5));
+                const b = Math.floor(255 * Math.max(0, Math.sin(t * Math.PI) - 0.2));
+                return [r, g, b];
+            },
+            rainbow: (t) => {
+                const h = (1.0 - t) * 240; 
+                const s = 1.0;
+                const v = 1.0;
+                let c = v * s;
+                let x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+                let m = v - c;
+                let r=0, g=0, b=0;
+                if (h >= 0 && h < 60) { r = c; g = x; b = 0; }
+                else if (h >= 60 && h < 120) { r = x; g = c; b = 0; }
+                else if (h >= 120 && h < 180) { r = 0; g = c; b = x; }
+                else if (h >= 180 && h < 240) { r = 0; g = x; b = c; }
+                else if (h >= 240 && h < 300) { r = x; g = 0; b = c; }
+                else { r = c; g = 0; b = x; }
+                return [Math.floor((r+m)*255), Math.floor((g+m)*255), Math.floor((b+m)*255)];
+            },
+            hotmetal: (t) => {
+                const r = Math.floor(Math.min(255, t * 255 * 2.5));
+                const g = Math.floor(Math.min(255, Math.max(0, (t - 0.4) * 255 * 2.5)));
+                const b = Math.floor(Math.min(255, Math.max(0, (t - 0.8) * 255 * 5)));
+                return [r, g, b];
+            }
+        };
+
+        // Event Listeners
+        inputWidth.addEventListener('change', updateResolutionConfig);
+        inputHeight.addEventListener('change', updateResolutionConfig);
+
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                fileBuffer = event.target.result;
+                updateResolutionConfig();
+            };
+            reader.readAsArrayBuffer(file);
+        });
+
+        function initWorkspace() {
+            const fileLength = fileBuffer.byteLength;
+            if (fileLength < BLOCK_SIZE) {
+                alert(`El archivo es demasiado pequeño para una matriz de ${WIDTH}x${HEIGHT}. Intenta con una resolución menor.`);
+                return;
+            }
+
+            allControls.forEach(c => c.disabled = false);
+            placeholder.style.display = 'none';
+            canvas.style.display = 'block';
+
+            const maxOffset = fileLength - BLOCK_SIZE;
+            offsetSlider.max = maxOffset;
+            offsetInput.max = maxOffset;
+            
+            // Iniciar en el offset por defecto o 0
+            if (currentOffset <= maxOffset) {
+                // Mantiene el currentOffset
+            } else {
+                currentOffset = 0;
+            }
+            
+            offsetSlider.value = currentOffset;
+            offsetInput.value = currentOffset;
+
+            // Auto-Ajuste SOLO la primera vez al cargar
+            minTemp = 0; maxTemp = 65535;
+
+            extractDataAndRender();
+        }
+
+        function extractDataAndRender() {
+            if (!fileBuffer) return;
+
+            const dataView = new DataView(fileBuffer, currentOffset, BLOCK_SIZE);
+            let localMin = 65535;
+            let localMax = 0;
+
+            // Extraer valores de 16-bit
+            for (let i = 0; i < PIXELS; i++) {
+                // 'true' para Little Endian
+                const val = dataView.getUint16(i * 2, true); 
+                rawThermalData[i] = val;
+                if (val < localMin) localMin = val;
+                if (val > localMax) localMax = val;
+            }
+
+            // Auto-Ajuste (ahora solo se activa explícitamente cuando están en 0 y 65535)
+            if (minTemp === 0 && maxTemp === 65535) {
+                // Dar un pequeño margen para mejorar contraste base
+                let margin = (localMax - localMin) * 0.02;
+                minTemp = Math.floor(Math.max(0, localMin + margin));
+                maxTemp = Math.floor(Math.min(65535, localMax - margin));
+
+                minSlider.min = localMin;
+                minSlider.max = localMax;
+                minSlider.value = minTemp;
+
+                maxSlider.min = localMin;
+                maxSlider.max = localMax;
+                maxSlider.value = maxTemp;
+            }
+            
+            updateLabels();
+            renderCanvas();
+        }
+
+        function renderCanvas() {
+            const paletteFunc = palettes[paletteSelect.value];
+            const imageData = ctx.createImageData(WIDTH, HEIGHT);
+            const range = maxTemp - minTemp || 1; 
+
+            for (let i = 0; i < PIXELS; i++) {
+                let val = rawThermalData[i];
+                
+                if (val < minTemp) val = minTemp;
+                if (val > maxTemp) val = maxTemp;
+
+                const t = (val - minTemp) / range;
+                const [r, g, b] = paletteFunc(t);
+                
+                const pxIndex = i * 4;
+                imageData.data[pxIndex] = r;
+                imageData.data[pxIndex + 1] = g;
+                imageData.data[pxIndex + 2] = b;
+                imageData.data[pxIndex + 3] = 255; 
+            }
+
+            ctx.putImageData(imageData, 0, 0);
+        }
+
+        function updateLabels() {
+            offsetInput.value = currentOffset;
+            offsetSlider.value = currentOffset;
+            minVal.textContent = minTemp;
+            maxVal.textContent = maxTemp;
+        }
+
+        function changeOffset(amount) {
+            let newOffset = currentOffset + amount;
+            currentOffset = Math.max(0, Math.min(parseInt(offsetSlider.max), newOffset));
+            // SE ELIMINÓ EL RESETEO AUTOMÁTICO DE RANGO AQUÍ (minTemp=0...)
+            extractDataAndRender();
+        }
+
+        // --- Controles de Offset ---
+        
+        // Slider
+        offsetSlider.addEventListener('input', (e) => {
+            currentOffset = parseInt(e.target.value, 10);
+            presetSelect.value = "custom";
+            extractDataAndRender();
+        });
+
+        // Input Directo (escribir número)
+        offsetInput.addEventListener('change', (e) => {
+            let val = parseInt(e.target.value, 10);
+            if (isNaN(val)) val = 0;
+            currentOffset = Math.max(0, Math.min(parseInt(offsetSlider.max), val));
+            presetSelect.value = "custom";
+            extractDataAndRender();
+        });
+
+        // Selector de Presets (Puntos de partida)
+        presetSelect.addEventListener('change', (e) => {
+            if (e.target.value === "511_512x384") {
+                inputWidth.value = 512;
+                inputHeight.value = 384;
+                currentOffset = Math.min(511, parseInt(offsetSlider.max) || 511);
+                updateResolutionConfig(); 
+            } else if (e.target.value === "0_640x480") {
+                inputWidth.value = 640;
+                inputHeight.value = 480;
+                currentOffset = 0;
+                updateResolutionConfig();
+            } else if (e.target.value === "0_64x48") {
+                inputWidth.value = 64;
+                inputHeight.value = 48;
+                currentOffset = 0; // Usualmente las imágenes pequeñas empiezan cerca del inicio
+                updateResolutionConfig();
+            }
+        });
+
+        // Botón Auto-Ajustar (Rango Manual)
+        btnAutoRange.addEventListener('click', () => {
+            minTemp = 0; maxTemp = 65535; // Esto fuerza la bandera de recalcular
+            extractDataAndRender();
+        });
+
+        // Botones de desplazamiento
+        btnRowMinus.addEventListener('click', () => { changeOffset(-(WIDTH * BYTES_PER_PIXEL)); presetSelect.value = "custom"; });
+        btnRowPlus.addEventListener('click', () => { changeOffset(WIDTH * BYTES_PER_PIXEL); presetSelect.value = "custom"; });
+        btn100PxMinus.addEventListener('click', () => { changeOffset(-(100 * BYTES_PER_PIXEL)); presetSelect.value = "custom"; });
+        btn100PxPlus.addEventListener('click', () => { changeOffset(100 * BYTES_PER_PIXEL); presetSelect.value = "custom"; });
+        btn10PxMinus.addEventListener('click', () => { changeOffset(-(10 * BYTES_PER_PIXEL)); presetSelect.value = "custom"; });
+        btn10PxPlus.addEventListener('click', () => { changeOffset(10 * BYTES_PER_PIXEL); presetSelect.value = "custom"; });
+        btnPxMinus.addEventListener('click', () => { changeOffset(-BYTES_PER_PIXEL); presetSelect.value = "custom"; });
+        btnPxPlus.addEventListener('click', () => { changeOffset(BYTES_PER_PIXEL); presetSelect.value = "custom"; });
+        btnByteMinus.addEventListener('click', () => { changeOffset(-1); presetSelect.value = "custom"; });
+        btnBytePlus.addEventListener('click', () => { changeOffset(1); presetSelect.value = "custom"; });
+
+        // --- Controles de Contraste / Brillo ---
+        minSlider.addEventListener('input', (e) => {
+            minTemp = parseInt(e.target.value, 10);
+            if (minTemp >= maxTemp) { maxTemp = minTemp + 1; maxSlider.value = maxTemp; }
+            updateLabels();
+            renderCanvas();
+        });
+
+        maxSlider.addEventListener('input', (e) => {
+            maxTemp = parseInt(e.target.value, 10);
+            if (maxTemp <= minTemp) { minTemp = maxTemp - 1; minSlider.value = minTemp; }
+            updateLabels();
+            renderCanvas();
+        });
+
+        paletteSelect.addEventListener('change', renderCanvas);
+
+        // --- Exportación ---
+        function downloadDataUrl(dataUrl, filename) {
+            const link = document.createElement('a');
+            link.href = dataUrl;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        btnPng.addEventListener('click', () => downloadDataUrl(canvas.toDataURL('image/png'), 'fluke_termica.png'));
+        btnJpg.addEventListener('click', () => {
+            const tmpCanvas = document.createElement('canvas');
+            tmpCanvas.width = WIDTH; tmpCanvas.height = HEIGHT;
+            const tCtx = tmpCanvas.getContext('2d');
+            tCtx.fillStyle = '#FFFFFF';
+            tCtx.fillRect(0,0, WIDTH, HEIGHT);
+            tCtx.drawImage(canvas, 0, 0);
+            downloadDataUrl(tmpCanvas.toDataURL('image/jpeg', 0.9), 'fluke_termica.jpg');
+        });
+        btnBmp.addEventListener('click', () => downloadDataUrl(canvas.toDataURL('image/bmp'), 'fluke_termica.bmp'));
+        
+        btnCsv.addEventListener('click', () => {
+            let csvContent = "data:text/csv;charset=utf-8,";
+            for (let y = 0; y < HEIGHT; y++) {
+                let row = [];
+                for (let x = 0; x < WIDTH; x++) {
+                    row.push(rawThermalData[y * WIDTH + x]);
+                }
+                csvContent += row.join(",") + "\r\n";
+            }
+            downloadDataUrl(encodeURI(csvContent), 'datos_termicos_matriz.csv');
+        });
+
+        // Drag & Drop
+        const dropZone = document.getElementById('drop-zone');
+        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('border-blue-500'); });
+        dropZone.addEventListener('dragleave', (e) => { e.preventDefault(); dropZone.classList.remove('border-blue-500'); });
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('border-blue-500');
+            if (e.dataTransfer.files.length) {
+                fileInput.files = e.dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change'));
+            }
+        });
+
+        // Inicializar tamaño del canvas por defecto
+        canvas.width = WIDTH;
+        canvas.height = HEIGHT;
+    </script>
+</body>
+</html>
+
+
+
+
+
